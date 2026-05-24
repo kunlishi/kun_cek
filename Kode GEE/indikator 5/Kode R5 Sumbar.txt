@@ -1,0 +1,268 @@
+// ============================================================ //
+// LANGKAH 1: DEFINISI AREA OF INTEREST (AOI)                   //
+// Indikator R-5 — Pemulihan Kondisi Bangunan                   //
+// Dashboard Big Data Bencana — STIS                            //
+// ============================================================ //
+
+// Memanggil aset seluruh kab/kota
+var aoi_all = ee.FeatureCollection('users/222313421_3SD2_WahyuGading/batas_kabkota_r5');
+
+// Filter spesifik untuk Provinsi Sumatera Barat
+var aoi = aoi_all.filter(ee.Filter.eq('nmprov', 'SUMATERA BARAT'));
+
+Map.addLayer(aoi, {color: 'orange'}, 'AOI - Provinsi Sumatera Barat');
+Map.centerObject(aoi, 8); // Zoom 8 karena area spasialnya sedikit lebih kompak
+
+// ============================================================ //
+// LANGKAH 2: BUILDING FOOTPRINT MASKING                        //
+// ============================================================ //
+var openBuildings = ee.FeatureCollection(
+  'GOOGLE/Research/open-buildings/v3/polygons'
+).filterBounds(aoi);
+
+var buildingMask = openBuildings
+  .reduceToImage(['confidence'], ee.Reducer.max())
+  .gt(0.5)  
+  .selfMask();
+
+Map.addLayer(buildingMask, {palette: ['FF6B6B']}, 'Building Mask Regional');
+
+// ============================================================ //
+// LANGKAH 3: DATA SENTINEL-2 PERIODE BASELINE (PRE-BENCANA)    //
+// ============================================================ //
+
+// 1. Definisikan tanggal kejadian bencana secara terpusat
+var tanggalBencana = ee.Date('2025-11-27'); // [GANTI] Sesuaikan dengan tanggal kejadian aktual untuk Sumbar
+
+// 2. Jendela waktu baseline otomatis (1 tahun sebelum bencana)
+var startBaseline = tanggalBencana.advance(-1, 'year').format('YYYY-MM-dd');
+var endBaseline   = tanggalBencana.advance(-1, 'day').format('YYYY-MM-dd');
+
+function maskS2clouds(image) {
+  var scl = image.select('SCL');
+  var mask = scl.neq(3).and(scl.neq(8)).and(scl.neq(9))
+               .and(scl.neq(10)).and(scl.neq(11));
+  return image.updateMask(mask)
+              .divide(10000)  
+              .copyProperties(image, ['system:time_start']);
+}
+
+var s2Baseline = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(aoi)
+  .filterDate(startBaseline, endBaseline)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30)) 
+  .map(maskS2clouds);
+
+print('Jumlah citra baseline regional:', s2Baseline.size());
+
+// ============================================================ //
+// LANGKAH 4: HITUNG INDEKS SPEKTRAL PER CITRA                  //
+// ============================================================ //
+function addIndices(image) {
+  var ndbi = image.normalizedDifference(['B11', 'B8']).rename('NDBI');
+  var ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI');
+  
+  var toSRGB = function(v) {
+    return ee.Image(v).where(
+      ee.Image(v).lte(0.04045),
+      ee.Image(v).divide(12.92)
+    ).where(
+      ee.Image(v).gt(0.04045),
+      ee.Image(v).add(0.055).divide(1.055).pow(2.4)
+    );
+  };
+  var R = toSRGB(image.select('B4'));
+  var G = toSRGB(image.select('B3'));
+  var B = toSRGB(image.select('B2'));
+  
+  var Y = R.multiply(0.2126).add(G.multiply(0.7152)).add(B.multiply(0.0722));
+  
+  var pl = Y.where(Y.gt(0.01),
+             Y.pow(1/3).multiply(116).subtract(16)
+           ).where(Y.lte(0.01),
+             Y.multiply(903.3)
+           ).rename('PL');
+           
+  return image.addBands([ndbi, ndvi, pl]);
+}
+
+var s2BaselineIdx = s2Baseline.map(addIndices);
+
+var baselineMedian = s2BaselineIdx.select(['NDBI','PL','NDVI']).median();
+var baselineStdDev = s2BaselineIdx.select(['NDBI','PL','NDVI']).reduce(ee.Reducer.stdDev());
+
+// ============================================================ //
+// LANGKAH 5: DATA SENTINEL-2 PERIODE PASCA-BENCANA             //
+// ============================================================ //
+var startPost = tanggalBencana.advance(1, 'day').format('YYYY-MM-dd');
+var endPost   = tanggalBencana.advance(6, 'month').format('YYYY-MM-dd');
+
+var s2Post = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(aoi)
+  .filterDate(startPost, endPost)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
+  .map(maskS2clouds)
+  .map(addIndices);
+
+print('Jumlah citra pasca-bencana regional:', s2Post.size());
+
+// ============================================================ //
+// LANGKAH 6: DETEKSI PEMULIHAN (THRESHOLD ± 1σ)                //
+// ============================================================ //
+var ndbiLower = baselineMedian.select('NDBI').subtract(baselineStdDev.select('NDBI_stdDev'));
+var ndbiUpper = baselineMedian.select('NDBI').add(baselineStdDev.select('NDBI_stdDev'));
+var plLower   = baselineMedian.select('PL').subtract(baselineStdDev.select('PL_stdDev'));
+var plUpper   = baselineMedian.select('PL').add(baselineStdDev.select('PL_stdDev'));
+
+function detectRecovery(image) {
+  var ndbi = image.select('NDBI');
+  var pl   = image.select('PL');
+  
+  var ndbiRecovered = ndbi.gte(ndbiLower).and(ndbi.lte(ndbiUpper));
+  var plRecovered   = pl.gte(plLower).and(pl.lte(plUpper));
+  
+  var recoveredLandscape = ndbiRecovered.or(plRecovered).rename('recovered_landscape');
+  var recoveredBuilding = ndbiRecovered.or(plRecovered).rename('recovered').updateMask(buildingMask);
+                  
+  return image.addBands([recoveredBuilding, recoveredLandscape])
+              .set('date', image.date().format('YYYY-MM-dd'));
+}
+
+var s2PostRecovery = s2Post.map(detectRecovery);
+
+var recoveryStats = s2PostRecovery.map(function(image) {
+  var stats = image.select('recovered').reduceRegions({
+    collection: aoi,
+    reducer: ee.Reducer.mean(), 
+    scale: 30                    
+  });
+  return stats.map(function(f) {
+    return f.set('date', image.get('date'));
+  });
+}).flatten();
+
+// ============================================================ //
+// LANGKAH 7: EKSPOR HASIL KE GOOGLE DRIVE                      //
+// ============================================================ //
+
+// A. Ekspor statistik persentase recovery khusus bangunan (CSV Bersih)
+Export.table.toDrive({
+  collection: recoveryStats,
+  description: 'R5_Recovery_Stats_Sumbar_Clean',
+  folder: 'GEE_Dashboard_BigData',
+  fileFormat: 'CSV',
+  selectors: ['nmkab', 'date', 'mean'] 
+});
+
+// B. Ekspor peta spasial RECOVERY versi KESELURUHAN LAHAN
+var maxRecoveryLandscape = s2PostRecovery.select('recovered_landscape').max().clip(aoi);
+
+Export.image.toDrive({
+  image: maxRecoveryLandscape, 
+  description: 'R5_Recovery_Map_Landscape_Sumbar',
+  folder: 'GEE_Dashboard_BigData',
+  scale: 30, 
+  region: aoi.geometry(),
+  maxPixels: 1e13,
+  fileFormat: 'GeoTIFF'
+});
+
+// C. Ekspor peta MEDIAN NDVI & PL PASCA-BENCANA untuk validasi
+var postBencanaMedian = s2Post.select(['NDVI', 'PL']).median().clip(aoi);
+
+Export.image.toDrive({
+  image: postBencanaMedian.select('NDVI'),
+  description: 'R5_NDVI_PostBencana_Sumbar',
+  folder: 'GEE_Dashboard_BigData',
+  scale: 30,
+  region: aoi.geometry(),
+  maxPixels: 1e13,
+  fileFormat: 'GeoTIFF'
+});
+
+Export.image.toDrive({
+  image: postBencanaMedian.select('PL'),
+  description: 'R5_PL_PostBencana_Sumbar',
+  folder: 'GEE_Dashboard_BigData',
+  scale: 30,
+  region: aoi.geometry(),
+  maxPixels: 1e13,
+  fileFormat: 'GeoTIFF'
+});
+
+// D. Ekspor time-series nilai NDBI rata-rata per kab/kota
+var ndbiTimeSeries = s2PostRecovery.map(function(image) {
+  return image.select('NDBI').reduceRegions({
+    collection: aoi,
+    reducer: ee.Reducer.mean(),
+    scale: 30 
+  }).map(function(f) {
+    return f.set('date', image.get('date'));
+  });
+}).flatten();
+
+Export.table.toDrive({
+  collection: ndbiTimeSeries,
+  description: 'R5_NDBI_TimeSeries_Sumbar_Clean',
+  folder: 'GEE_Dashboard_BigData',
+  fileFormat: 'CSV',
+  selectors: ['nmkab', 'date', 'mean'] 
+});
+
+// ============================================================ //
+// LANGKAH 8: VISUALISASI VALIDASI DI GEE CODE EDITOR           //
+// ============================================================ //
+
+// 1. VALIDASI INDEKS NDVI (Pre vs Post)
+Map.addLayer(
+  baselineMedian.select('NDVI').clip(aoi),
+  {min: 0, max: 0.8, palette: ['white', 'yellow', 'green']},
+  '1a. Baseline NDVI (Pre-Bencana)'
+);
+Map.addLayer(
+  postBencanaMedian.select('NDVI'),
+  {min: 0, max: 0.8, palette: ['white', 'yellow', 'green']},
+  '1b. Median NDVI (Pasca-Bencana)'
+);
+
+// 2. VALIDASI INDEKS PERCEIVED LIGHTNESS / PL (Pre vs Post)
+Map.addLayer(
+  baselineMedian.select('PL').clip(aoi),
+  {min: 0, max: 100, palette: ['black', 'grey', 'white']},
+  '2a. Baseline PL (Pre-Bencana)'
+);
+Map.addLayer(
+  postBencanaMedian.select('PL'),
+  {min: 0, max: 100, palette: ['black', 'grey', 'white']},
+  '2b. Median PL (Pasca-Bencana)'
+);
+
+// 3. VALIDASI PETA PEMULIHAN (LANDSCAPE VS BUILDING)
+Map.addLayer(
+  maxRecoveryLandscape,
+  {min: 0, max: 1, palette: ['white', '44BB44']},
+  '3a. Peta Pemulihan (Skala Landscape - Untuk Cek Pola)'
+);
+
+var maxRecoveryBuilding = s2PostRecovery.select('recovered').max().clip(aoi);
+Map.addLayer(
+  maxRecoveryBuilding,
+  {min: 0, max: 1, palette: ['FF4444', '00FF00']},
+  '3b. Peta Pemulihan R-5 (Zoom In Ke Pemukiman)'
+);
+
+// 4. GRAFIK VALIDASI temporal NDBI
+var sampleKab = aoi.filter(ee.Filter.eq('nmkab', 'PADANG PARIAMAN'));
+var chart = ui.Chart.image.series({
+  imageCollection: s2PostRecovery.select('NDBI'),
+  region: sampleKab.geometry(),
+  reducer: ee.Reducer.mean(),
+  scale: 30
+}).setOptions({
+  title: 'Tren Temporal Indeks NDBI Pasca-Bencana — Padang Pariaman',
+  hAxis: {title: 'Tanggal'},
+  vAxis: {title: 'Rata-rata NDBI'},
+  lineWidth: 2,
+  colors: ['2E75B6']
+});
+print(chart);

@@ -1,0 +1,150 @@
+
+var CFG = {
+  SCALE : 100,
+  TILE_SCALE : 4,
+  THR_DB : -17.5,
+  JRC_SEASON : 8,
+  SLOPE_THRESHOLD : 5,
+  T_PUNCAK_START : '2025-12-1',   // ← MULAI DARI 1 DESEMBER 2025
+  T_PUNCAK_END   : '2025-12-31',
+  T_TERKINI_START: '2026-04-01',
+  T_TERKINI_END  : '2026-04-30',
+  EXPORT_FOLDER  : 'GEE_Exports',
+  EXPORT_PREFIX  : 'R3_Residual_v4_1Des2025_Apr2026'
+};
+
+// ─── DAFTAR KABUPATEN/KOTA ─────────────────
+var namaGaul = [
+  'Bireuen','Simeulue','Kepulauan Mentawai','Aceh Barat Daya','Aceh Barat',
+  'Aceh Jaya','Aceh Selatan','Aceh Tamiang','Aceh Tenggara','Aceh Timur',
+  'Aceh Utara','Kota Langsa','Kota Lhokseumawe','Kota Pariaman','Kota Padangsidempuan',
+  'Tapanuli Selatan','Dairi','Humbang Hasundutan','Nias Selatan','Nias',
+  'Tapanuli Utara','Aceh Tengah','Bener Meriah','Dharmasraya','Solok Selatan',
+  'Solok','Deli Serdang','Samosir','Serdang Bedagai','Toba Samosir',
+  'Aceh Besar','Kota Sabang','Pidie','Aceh Singkil','Agam',
+  'Kota Padang','Kota Sawahlunto','Kota Solok','Pesisir Selatan','Kota Payakumbuh',
+  'Karo','Kota Binjai','Kota Medan','Kota Sibolga','Langkat',
+  'Simalungun','Asahan','Kota Tanjungbalai','Kota Tebingtinggi','Tapanuli Tengah'
+];
+
+var kabFC = ee.FeatureCollection('FAO/GAUL/2015/level2')
+  .filter(ee.Filter.eq('ADM0_NAME', 'Indonesia'))
+  .filter(ee.Filter.inList('ADM2_NAME', namaGaul));
+
+var AOI_bbox = kabFC.geometry().bounds();
+print('Total kabupaten/kota terdeteksi:', kabFC.size());
+Map.centerObject(AOI_bbox, 7);
+Map.addLayer(kabFC, {color:'red', fillColor:'00000000'}, 'Batas Kabupaten/Kota');
+
+function getSAR(start, end) {
+  var col = ee.ImageCollection('COPERNICUS/S1_GRD')
+    .filterBounds(AOI_bbox)
+    .filterDate(start, end)
+    .filter(ee.Filter.eq('instrumentMode', 'IW'))
+    .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+    .select('VV');
+  var desc = col.filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING'));
+  var asc = col.filter(ee.Filter.eq('orbitProperties_pass', 'ASCENDING'));
+  return ee.ImageCollection(ee.Algorithms.If(desc.size().gt(0), desc, asc)).mean().clip(AOI_bbox);
+}
+
+var img_puncak = getSAR(CFG.T_PUNCAK_START, CFG.T_PUNCAK_END);
+var img_terkini = getSAR(CFG.T_TERKINI_START, CFG.T_TERKINI_END);
+
+// Speckle reduction
+var p_sm = img_puncak.focal_mean(50, 'square', 'meters');
+var t_sm = img_terkini.focal_mean(50, 'square', 'meters');
+
+// ─── MASK AIR PERMANEN + SLOPE (DARI PAPER TANGERANG) ───────────────────
+var bukan_permanen = ee.Image('JRC/GSW1_4/GlobalSurfaceWater')
+  .select('seasonality').clip(AOI_bbox).lt(CFG.JRC_SEASON);
+
+var srtm = ee.Image('USGS/SRTMGL1_003').select('elevation');
+var slope = ee.Terrain.slope(srtm).clip(AOI_bbox);
+
+var flood_puncak = p_sm.lt(CFG.THR_DB)
+  .updateMask(bukan_permanen)
+  .updateMask(slope.lt(CFG.SLOPE_THRESHOLD));
+
+var flood_terkini = t_sm.lt(CFG.THR_DB)
+  .updateMask(bukan_permanen)
+  .updateMask(slope.lt(CFG.SLOPE_THRESHOLD));
+
+// ─── PREVIEW GLOBAL ─────────────────────────────────────────────────────
+var pixArea = ee.Image.pixelArea().divide(10000);
+var redPreview = {reducer: ee.Reducer.sum(), geometry: AOI_bbox, scale: 500, tileScale: CFG.TILE_SCALE, maxPixels: 1e13, bestEffort: true};
+
+var lp_preview = ee.Number(flood_puncak.multiply(pixArea).reduceRegion(redPreview).get('VV'));
+var lt_preview = ee.Number(flood_terkini.multiply(pixArea).reduceRegion(redPreview).get('VV'));
+var r3_preview = lt_preview.divide(lp_preview).multiply(100);
+
+print('═══════════════════════════════════════════════════');
+print('PREVIEW GLOBAL (Banjir mulai 25 Nov 2025)');
+print('Luas Puncak Banjir Nov-Des 2025 (ha)   :', lp_preview.round());
+print('Luas Residual Apr 2026 (ha)            :', lt_preview.round());
+print('R-3 Global (%)                         :', r3_preview.round());
+print('═══════════════════════════════════════════════════');
+
+r3_preview.evaluate(function(v){
+  if(!v){print('⚠️ Cek scene SAR'); return;}
+  print('STATUS:', v > 75 ? '🔴 KRITIS' : v > 50 ? '🟠 PARAH' : v > 25 ? '🟡 SEDANG' : v > 10 ? '🟢 MEMBAIK' : ' NORMAL');
+});
+
+print('Scene Puncak Banjir 25Nov-Des 2025 :', ee.ImageCollection('COPERNICUS/S1_GRD').filterBounds(AOI_bbox).filterDate(CFG.T_PUNCAK_START, CFG.T_PUNCAK_END).filter(ee.Filter.eq('instrumentMode','IW')).size());
+print('Scene Pemulihan Apr 2026         :', ee.ImageCollection('COPERNICUS/S1_GRD').filterBounds(AOI_bbox).filterDate(CFG.T_TERKINI_START, CFG.T_TERKINI_END).filter(ee.Filter.eq('instrumentMode','IW')).size());
+
+// ─── PERHITUNGAN PER KABUPATEN ──────────────────────────────────────────
+var hasilPerKab = kabFC.map(function(feat){
+  var geom = feat.geometry();
+  var areaKab = ee.Number(geom.area().divide(10000));
+  
+  var redKab = {reducer: ee.Reducer.sum(), geometry: geom, scale: CFG.SCALE, tileScale: CFG.TILE_SCALE, maxPixels: 1e13, bestEffort: true};
+  
+  var lp = ee.Number(flood_puncak.multiply(pixArea).reduceRegion(redKab).get('VV'));
+  var lt = ee.Number(flood_terkini.multiply(pixArea).reduceRegion(redKab).get('VV'));
+  
+  var puncakPersen = ee.Algorithms.If(areaKab.gt(0), lp.divide(areaKab).multiply(100), 0);
+  var terkiniPersen = ee.Algorithms.If(areaKab.gt(0), lt.divide(areaKab).multiply(100), 0);
+  var r3 = ee.Algorithms.If(lp.gt(0), lt.divide(lp).multiply(100), 0);
+  
+  return feat.set({
+    'provinsi'        : feat.get('ADM1_NAME'),
+    'kabupaten'       : feat.get('ADM2_NAME'),
+    'area_kab_ha'     : areaKab.round(),
+    'luas_puncak_ha'  : lp.round(),
+    'puncak_persen'   : ee.Number(puncakPersen).round(),
+    'luas_terkini_ha' : lt.round(),
+    'terkini_persen'  : ee.Number(terkiniPersen).round(),
+    'r3_persen'       : ee.Number(r3).round()
+  });
+});
+
+// ─── EXPORT ─────────────────────────────────────────────────────────────
+Export.table.toDrive({
+  collection: hasilPerKab.select(['provinsi','kabupaten','area_kab_ha','luas_puncak_ha','puncak_persen','luas_terkini_ha','terkini_persen','r3_persen']),
+  description: CFG.EXPORT_PREFIX,
+  folder: CFG.EXPORT_FOLDER,
+  fileNamePrefix: CFG.EXPORT_PREFIX,
+  fileFormat: 'CSV'
+});
+
+print('');
+print('File: ' + CFG.EXPORT_PREFIX + '.csv');
+print('Periode: Banjir 1 Des 2025 → April 2026');
+print('═══════════════════════════════════════════════════');
+
+// ─── VISUALISASI MAP ────────────────────────────────────────────────────
+var sudah_surut = flood_puncak.and(flood_terkini.not());
+
+Map.addLayer(t_sm, {min:-25, max:0, palette:['black','white']}, '① SAR Pemulihan April 2026');
+Map.addLayer(flood_puncak, {palette:['#1565C0'], opacity:0.6}, '② Genangan Puncak Banjir 25Nov-Des 2025 (slope mask)');
+Map.addLayer(sudah_surut, {palette:['#2E7D32'], opacity:0.7}, '③ Sudah Surut (Hijau)');
+Map.addLayer(flood_terkini, {palette:['#E65100'], opacity:0.75}, '④ Genangan Residual April 2026 (Oranye)');
+
+// Histogram
+print(ui.Chart.image.histogram({image: p_sm, region: AOI_bbox, scale: 1000, minBucketWidth:1}).setOptions({
+  title: 'Histogram SAR Puncak Banjir 25Nov-Des 2025 — Threshold -15dB + Slope Mask',
+  hAxis: {title:'Backscatter VV (dB)', viewWindow:{min:-30,max:5}},
+  vAxis: {title:'Jumlah Piksel'}
+}));
+

@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Story | Banjir Aceh &amp; Sumatera 2025-2026</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Poppins:wght@600&amp;display=swap');
+        
+        :root {
+            --primary: #0F172A;
+            --accent: #0EA5E9;
+        }
+        
+        body {
+            font-family: 'Inter', system_ui, sans-serif;
+        }
+        
+        .webstory-container {
+            width: 100%;
+            max-width: 420px;
+            margin: 0 auto;
+            background: #0F172A;
+            box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.4);
+            overflow: hidden;
+            position: relative;
+            height: 100vh;
+            max-height: 820px;
+            border-radius: 40px;
+            border: 12px solid #1E2937;
+        }
+        
+        .slide {
+            width: 100%;
+            height: 100%;
+            scroll-snap-align: start;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .webstory-wrapper {
+            scroll-snap-type: y mandatory;
+            overflow-y: scroll;
+            height: 100%;
+            scrollbar-width: none;
+        }
+        
+        .webstory-wrapper::-webkit-scrollbar {
+            display: none;
+        }
+        
+        .slide-header {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: linear-gradient(to bottom, rgba(15, 23, 42, 0.9), transparent);
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+        }
+        
+        .progress-bar {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            height: 4px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 9999px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: #0EA5E9;
+            transition: width 0.3s ease;
+        }
+        
+        .modern-text {
+            font-family: 'Poppins', system_ui, sans-serif;
+            font-weight: 600;
+            line-height: 1.1;
+        }
+        
+        .stat-number {
+            font-size: 4.5rem;
+            line-height: 1;
+            font-weight: 700;
+            font-family: 'Poppins', system_ui, sans-serif;
+        }
+        
+        .slide-content {
+            padding: 60px 24px 40px;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .nav-dot {
+            width: 8px;
+            height: 8px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 50%;
+            transition: all 0.3s ease;
+        }
+        
+        .nav-dot.active {
+            background: #0EA5E9;
+            transform: scale(1.3);
+        }
+        
+        .flood-bg {
+            background: linear-gradient(180deg, #0F172A 0%, #1E3A5F 100%);
+        }
+    </style>
+</head>
+<body class="bg-slate-900 flex items-center justify-center min-h-screen p-4">
+    <!-- Phone Frame -->
+    <div class="webstory-container mx-auto">
+        
+        <!-- Header -->
+        <div class="absolute top-0 left-0 right-0 z-50 px-4 pt-3">
+            <div class="flex justify-between items-center px-4">
+                <!-- Progress -->
+                <div class="flex-1 max-w-[140px]">
+                    <div class="h-1 bg-white/20 rounded-full overflow-hidden">
+                        <div id="progress-bar" 
+                             class="h-1 bg-sky-400 transition-all duration-300 rounded-full" 
+                             style="width: 10%"></div>
+                    </div>
+                </div>
+                
+                <div class="flex items-center gap-x-2 text-white text-xs font-medium px-3 py-1 bg-black/30 rounded-full">
+                    <i class="fas fa-globe text-sky-400"></i>
+                    <span>Web Story</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slides Container -->
+        <div id="webstory-wrapper" 
+             class="webstory-wrapper h-full overflow-y-auto snap-y snap-mandatory">
+            
+            <!-- SLIDE 1: COVER -->
+            <div class="slide bg-slate-950 text-white relative" id="slide-1">
+                <div class="absolute inset-0 bg-[url('https://picsum.photos/id/1015/800/1200')] bg-cover bg-center opacity-70"></div>
+                <div class="absolute inset-0 bg-gradient-to-b from-black/70 via-black/50 to-black/80"></div>
+                
+                <div class="slide-content relative z-10 flex flex-col justify-center items-center text-center px-6">
+                    <div class="mb-4">
+                        <span class="px-4 py-1.5 text-xs font-semibold tracking-[2px] bg-white/10 backdrop-blur-md rounded-full">WEB STORY</span>
+                    </div>
+                    
+                    <h1 class="modern-text text-4xl leading-none font-bold mb-4 tracking-tighter">
+                        BANJIR ACEH<br>&amp; SUMATERA<br>2025-2026
+                    </h1>
+                    
+                    <p class="text-lg text-white/90 mb-8 max-w-[260px]">
+                        Masih ada genangan di April 2026?
+                    </p>
+                    
+                    <div class="flex items-center gap-2 text-sm bg-white/10 px-4 py-2 rounded-2xl backdrop-blur">
+                        <i class="fas fa-satellite text-sky-400"></i>
+                        <span class="font-medium">Sentinel-1 SAR • Threshold -17.5 dB</span>
+                    </div>
+                </div>
+                
+                <div class="absolute bottom-8 left-1/2 -translate-x-1/2 text-center">
+                    <div class="text-[10px] text-white/50 tracking-widest">GESER UNTUK MELANJUTKAN</div>
+                    <i class="fas fa-chevron-down text-white/60 text-xl mt-1 animate-bounce"></i>
+                </div>
+            </div>
+
+            <!-- SLIDE 2: APA YANG TERJADI -->
+            <div class="slide bg-slate-900 text-white" id="slide-2">
+                <div class="slide-content">
+                    <div class="mb-auto">
+                        <div class="flex items-center gap-3 mb-6">
+                            <div class="w-9 h-9 bg-sky-500/20 text-sky-400 rounded-2xl flex items-center justify-center">
+                                <i class="fas fa-calendar-alt text-xl"></i>
+                            </div>
+                            <div>
+                                <div class="text-sky-400 text-sm font-semibold tracking-widest">TIMELINE</div>
+                                <div class="text-3xl font-bold modern-text">Apa yang Terjadi?</div>
+                            </div>
+                        </div>
+                        
+                        <div class="space-y-5">
+                            <div class="flex gap-4">
+                                <div class="w-16 text-center">
+                                    <div class="text-xs text-white/50">DESEMBER</div>
+                                    <div class="text-4xl font-bold text-white">2025</div>
+                                </div>
+                                <div class="flex-1 pt-1">
+                                    <div class="bg-white/10 rounded-3xl p-4">
+                                        <div class="font-semibold">Puncak Banjir Besar</div>
+                                        <div class="text-sm text-white/70 mt-1">Genangan meluas di 50 kabupaten/kota</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="flex gap-4">
+                                <div class="w-16 text-center">
+                                    <div class="text-xs text-white/50">APRIL</div>
+                                    <div class="text-4xl font-bold text-white">2026</div>
+                                </div>
+                                <div class="flex-1 pt-1">
+                                    <div class="bg-white/10 rounded-3xl p-4">
+                                        <div class="font-semibold">Pengukuran Residual</div>
+                                        <div class="text-sm text-white/70 mt-1">Masih ada genangan signifikan</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 3: METODOLOGI -->
+            <div class="slide bg-slate-900 text-white" id="slide-3">
+                <div class="slide-content">
+                    <div class="mb-8">
+                        <div class="text-sky-400 text-sm font-semibold tracking-[1.5px]">METODE</div>
+                        <div class="text-3xl font-bold modern-text leading-none">Analisis Sentinel-1 SAR</div>
+                    </div>
+                    
+                    <div class="space-y-6">
+                        <div class="bg-white/5 p-5 rounded-3xl">
+                            <div class="flex items-start gap-4">
+                                <i class="fas fa-satellite text-3xl text-sky-400 mt-1"></i>
+                                <div>
+                                    <div class="font-semibold">Data Sumber</div>
+                                    <div class="text-sm text-white/70">Sentinel-1 GRD VV Polarization</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-white/5 p-5 rounded-3xl">
+                            <div class="flex items-start gap-4">
+                                <i class="fas fa-chart-line text-3xl text-emerald-400 mt-1"></i>
+                                <div>
+                                    <div class="font-semibold">Threshold Terbaik</div>
+                                    <div class="text-4xl font-bold text-emerald-400">-17.5 dB</div>
+                                    <div class="text-xs text-white/60 mt-1">Akurasi tinggi + minim false positive</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 4: HASIL UTAMA -->
+            <div class="slide bg-gradient-to-br from-slate-900 to-slate-950 text-white" id="slide-4">
+                <div class="slide-content flex flex-col justify-center items-center text-center">
+                    <div class="mb-4 text-sky-400 text-sm font-semibold tracking-[2px]">HASIL UTAMA</div>
+                    
+                    <div class="mb-6">
+                        <div class="stat-number text-white">80.6<span class="text-6xl align-super">%</span></div>
+                        <div class="text-2xl font-semibold -mt-3">Rata-rata Residual</div>
+                    </div>
+                    
+                    <div class="grid grid-cols-3 gap-3 w-full max-w-[300px]">
+                        <div class="bg-white/10 rounded-3xl p-4 text-center">
+                            <div class="text-3xl font-bold text-red-400">19</div>
+                            <div class="text-xs text-white/70">Anomali</div>
+                        </div>
+                        <div class="bg-white/10 rounded-3xl p-4 text-center">
+                            <div class="text-3xl font-bold text-emerald-400">9</div>
+                            <div class="text-xs text-white/70">Bersih Total</div>
+                        </div>
+                        <div class="bg-white/10 rounded-3xl p-4 text-center">
+                            <div class="text-3xl font-bold">5.147</div>
+                            <div class="text-xs text-white/70">ha Sisa</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 5: PETA RINGKASAN -->
+            <div class="slide bg-slate-900 text-white" id="slide-5">
+                <div class="slide-content">
+                    <div class="mb-6">
+                        <div class="text-sky-400 text-sm font-semibold">VISUALISASI</div>
+                        <div class="text-3xl font-bold modern-text">Peta Ringkasan</div>
+                    </div>
+                    
+                    <div class="flex-1 flex items-center justify-center">
+                        <div class="relative w-full max-w-[280px]">
+                            <img src="https://picsum.photos/id/1018/600/400" 
+                                 class="rounded-3xl shadow-2xl w-full border border-white/10" alt="Peta Sumatera">
+                            
+                            <div class="absolute -bottom-3 -right-3 bg-sky-500 text-white text-xs px-4 py-1.5 rounded-2xl font-medium shadow-lg">
+                                50 Kabupaten/Kota
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="text-center text-xs text-white/60 mt-6">
+                        Aceh • Sumatera Utara • Sumatera Barat
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 6: 5 WILAYAH PALING PARAH -->
+            <div class="slide bg-slate-950 text-white" id="slide-6">
+                <div class="slide-content">
+                    <div class="mb-6">
+                        <div class="flex items-center gap-3">
+                            <i class="fas fa-exclamation-triangle text-red-500 text-3xl"></i>
+                            <div>
+                                <div class="text-red-400 text-sm font-semibold">PRIORITAS TINGGI</div>
+                                <div class="text-3xl font-bold modern-text">5 Wilayah Paling Parah</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between bg-white/5 p-4 rounded-3xl">
+                            <div class="flex items-center gap-3"><span class="font-mono text-red-400 font-bold">01</span> <span>Dharmasraya</span></div>
+                            <div class="font-bold text-red-400">206%</div>
+                        </div>
+                        <div class="flex items-center justify-between bg-white/5 p-4 rounded-3xl">
+                            <div class="flex items-center gap-3"><span class="font-mono text-red-400 font-bold">02</span> <span>Simalungun</span></div>
+                            <div class="font-bold text-red-400">191%</div>
+                        </div>
+                        <div class="flex items-center justify-between bg-white/5 p-4 rounded-3xl">
+                            <div class="flex items-center gap-3"><span class="font-mono text-red-400 font-bold">03</span> <span>Kota Langsa</span></div>
+                            <div class="font-bold text-red-400">182%</div>
+                        </div>
+                        <div class="flex items-center justify-between bg-white/5 p-4 rounded-3xl">
+                            <div class="flex items-center gap-3"><span class="font-mono text-red-400 font-bold">04</span> <span>Nias</span></div>
+                            <div class="font-bold text-red-400">165%</div>
+                        </div>
+                        <div class="flex items-center justify-between bg-white/5 p-4 rounded-3xl">
+                            <div class="flex items-center gap-3"><span class="font-mono text-red-400 font-bold">05</span> <span>Kota Medan</span></div>
+                            <div class="font-bold text-red-400">148%</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 7: PENYEBAB ANOMALI -->
+            <div class="slide bg-slate-900 text-white" id="slide-7">
+                <div class="slide-content">
+                    <div class="mb-6">
+                        <div class="text-3xl font-bold modern-text">Penyebab Anomali</div>
+                        <div class="text-white/70">Mengapa R-3 &gt; 100%?</div>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div class="flex gap-4 bg-white/5 p-4 rounded-3xl">
+                            <div class="text-amber-400"><i class="fas fa-cloud-rain fa-2x"></i></div>
+                            <div><div class="font-semibold">Hujan Baru di April</div><div class="text-sm text-white/70">Menyebabkan genangan bertambah</div></div>
+                        </div>
+                        
+                        <div class="flex gap-4 bg-white/5 p-4 rounded-3xl">
+                            <div class="text-red-400"><i class="fas fa-water fa-2x"></i></div>
+                            <div><div class="font-semibold">False Positive</div><div class="text-sm text-white/70">Tanah basah terdeteksi sebagai air</div></div>
+                        </div>
+                        
+                        <div class="flex gap-4 bg-white/5 p-4 rounded-3xl">
+                            <div class="text-sky-400"><i class="fas fa-mountain fa-2x"></i></div>
+                            <div><div class="font-semibold">Topografi Rendah</div><div class="text-sm text-white/70">Drainase buruk + pasang surut</div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 8: THRESHOLD TERBAIK -->
+            <div class="slide bg-slate-900 text-white" id="slide-8">
+                <div class="slide-content">
+                    <div class="mb-6">
+                        <div class="text-emerald-400 text-sm font-semibold">REKOMENDASI</div>
+                        <div class="text-3xl font-bold modern-text">Threshold Terbaik</div>
+                    </div>
+                    
+                    <div class="text-center mb-8">
+                        <div class="inline-flex items-baseline">
+                            <span class="text-7xl font-black text-emerald-400">-17.5</span>
+                            <span class="text-4xl font-bold text-white/90">dB</span>
+                        </div>
+                        <div class="text-emerald-400 font-semibold mt-1">PALING OPTIMAL</div>
+                    </div>
+                    
+                    <div class="text-sm bg-white/5 p-4 rounded-3xl text-center">
+                        Rata-rata R-3 terendah (80.6%)<br>
+                        + Minim anomali ekstrem
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 9: KESIMPULAN -->
+            <div class="slide bg-slate-950 text-white" id="slide-9">
+                <div class="slide-content flex flex-col justify-center">
+                    <div class="text-center mb-8">
+                        <i class="fas fa-check-circle text-emerald-400 text-5xl mb-4"></i>
+                        <div class="text-3xl font-bold modern-text">Kesimpulan</div>
+                    </div>
+                    
+                    <div class="space-y-4 text-center">
+                        <div class="bg-white/5 p-5 rounded-3xl">
+                            Threshold <span class="font-bold text-emerald-400">-17.5 dB</span> adalah yang terbaik
+                        </div>
+                        <div class="bg-white/5 p-5 rounded-3xl">
+                            19 wilayah masih membutuhkan <span class="font-bold">perhatian khusus</span>
+                        </div>
+                        <div class="text-sm text-white/70">
+                            Validasi lapangan sangat diperlukan di Dharmasraya, Simalungun, dan Nias.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 10: CALL TO ACTION -->
+            <div class="slide bg-gradient-to-br from-slate-900 to-black text-white flex items-center" id="slide-10">
+                <div class="slide-content text-center">
+                    <div class="mx-auto mb-8 w-20 h-20 bg-white/10 rounded-full flex items-center justify-center">
+                        <i class="fas fa-share-alt text-4xl text-sky-400"></i>
+                    </div>
+                    
+                    <div class="text-3xl font-bold modern-text mb-3">Bagikan Laporan Ini</div>
+                    <p class="text-white/70 max-w-[240px] mx-auto mb-8">Bantu sebarkan informasi penting ini ke masyarakat dan pemerintah daerah.</p>
+                    
+                    <div class="space-y-3 max-w-[260px] mx-auto">
+                        <button onclick="shareStory()" 
+                                class="w-full bg-sky-500 hover:bg-sky-600 transition-colors text-white font-semibold py-4 rounded-3xl flex items-center justify-center gap-2">
+                            <i class="fas fa-share"></i>
+                            <span>BAGIKAN SEKARANG</span>
+                        </button>
+                        
+                        <button onclick="window.location.reload()" 
+                                class="w-full border border-white/30 text-white py-3.5 rounded-3xl text-sm font-medium hover:bg-white/10 transition-colors">
+                            MULAI ULANG
+                        </button>
+                    </div>
+                    
+                    <div class="text-[10px] text-white/50 mt-8">© 2026 • Analisis Residual Flood • Sentinel-1</div>
+                </div>
+            </div>
+            
+        </div>
+        
+        <!-- Bottom Navigation -->
+        <div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 bg-black/70 px-4 py-2 rounded-3xl">
+            <button onclick="prevSlide()" class="text-white/70 hover:text-white transition-colors px-2">
+                <i class="fas fa-chevron-left text-xl"></i>
+            </button>
+            
+            <div class="flex items-center gap-1.5" id="nav-dots">
+                <!-- Dots generated by JS -->
+            </div>
+            
+            <button onclick="nextSlide()" class="text-white/70 hover:text-white transition-colors px-2">
+                <i class="fas fa-chevron-right text-xl"></i>
+            </button>
+        </div>
+        
+    </div>
+
+    <script>
+        // Tailwind Script
+        function initializeTailwind() {
+            // Already using CDN
+        }
+        
+        let currentSlide = 1;
+        const totalSlides = 10;
+        
+        function updateProgress() {
+            const progress = (currentSlide / totalSlides) * 100;
+            document.getElementById('progress-bar').style.width = `${progress}%`;
+            
+            // Update active dot
+            document.querySelectorAll('.nav-dot').forEach((dot, index) => {
+                dot.classList.toggle('active', (index + 1) === currentSlide);
+            });
+        }
+        
+        function goToSlide(slideNumber) {
+            const wrapper = document.getElementById('webstory-wrapper');
+            const slide = document.getElementById(`slide-${slideNumber}`);
+            
+            if (slide) {
+                slide.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                currentSlide = slideNumber;
+                updateProgress();
+            }
+        }
+        
+        function nextSlide() {
+            if (currentSlide < totalSlides) {
+                goToSlide(currentSlide + 1);
+            }
+        }
+        
+        function prevSlide() {
+            if (currentSlide > 1) {
+                goToSlide(currentSlide - 1);
+            }
+        }
+        
+        function createNavDots() {
+            const container = document.getElementById('nav-dots');
+            container.innerHTML = '';
+            
+            for (let i = 1; i <= totalSlides; i++) {
+                const dot = document.createElement('div');
+                dot.className = `nav-dot cursor-pointer ${i === 1 ? 'active' : ''}`;
+                dot.onclick = () => goToSlide(i);
+                container.appendChild(dot);
+            }
+        }
+        
+        function shareStory() {
+            const text = "Laporan Web Story: Banjir Aceh & Sumatera 2025-2026 - Analisis Residual dengan Sentinel-1 SAR";
+            
+            if (navigator.share) {
+                navigator.share({
+                    title: "Web Story Banjir Aceh & Sumatera",
+                    text: text,
+                    url: window.location.href
+                });
+            } else {
+                // Fallback
+                navigator.clipboard.writeText(text + "\n" + window.location.href).then(() => {
+                    alert("Link berhasil disalin ke clipboard!");
+                });
+            }
+        }
+        
+        // Keyboard Navigation
+        function setupKeyboard() {
+            document.addEventListener('keydown', function(e) {
+                if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                    nextSlide();
+                } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                    prevSlide();
+                }
+            });
+        }
+        
+        // Auto detect current slide on scroll
+        function setupScrollListener() {
+            const wrapper = document.getElementById('webstory-wrapper');
+            
+            wrapper.addEventListener('scroll', () => {
+                const slides = document.querySelectorAll('.slide');
+                let current = 1;
+                
+                slides.forEach((slide, index) => {
+                    const rect = slide.getBoundingClientRect();
+                    const wrapperRect = wrapper.getBoundingClientRect();
+                    
+                    if (rect.top <= wrapperRect.top + 100) {
+                        current = index + 1;
+                    }
+                });
+                
+                if (current !== currentSlide) {
+                    currentSlide = current;
+                    updateProgress();
+                }
+            });
+        }
+        
+        // Initialize everything
+        function init() {
+            initializeTailwind();
+            createNavDots();
+            setupKeyboard();
+            setupScrollListener();
+            
+            // Set initial progress
+            setTimeout(() => {
+                updateProgress();
+            }, 300);
+            
+            // Show welcome toast
+            setTimeout(() => {
+                const toast = document.createElement('div');
+                toast.className = 'fixed bottom-20 left-1/2 -translate-x-1/2 bg-black/80 text-white text-xs px-4 py-2 rounded-3xl flex items-center gap-2 z-50';
+                toast.innerHTML = `<i class="fas fa-info-circle"></i> <span>Gunakan panah keyboard atau geser untuk navigasi</span>`;
+                document.body.appendChild(toast);
+                
+                setTimeout(() => {
+                    toast.style.transition = 'all 0.3s';
+                    toast.style.opacity = '0';
+                    setTimeout(() => toast.remove(), 300);
+                }, 2800);
+            }, 1500);
+            
+            console.log('%c[Web Story] Fully initialized successfully!', 'color:#64748b');
+        }
+        
+        // Boot app
+        window.onload = init;
+    </script>
+</body>
+</html>

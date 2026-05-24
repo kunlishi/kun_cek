@@ -1,0 +1,539 @@
+// =====================================================================
+// PEMULIHAN VEGETASI — NDVI SENTINEL-2
+// Wilayah  : Aceh | Sumatera Utara | Sumatera Barat
+// Baseline : Oktober 2022 – Oktober 2025
+// Impact   : November 2025 – Januari 2026
+// Recovery : Februari 2026 – sekarang
+//
+// Dataset  : Asset GADM 4.1 milik pengguna (gadm41_IDN_2)
+// Field    : NAME_1 = provinsi (Bahasa Indonesia)
+//            NAME_2 = kabupaten/kota (Bahasa Indonesia)
+//
+// PERBEDAAN KRITIS vs FAO GAUL:
+//   GAUL  → ADM1_NAME, bahasa Inggris ('West Sumatra', 'North Sumatra')
+//   GADM  → NAME_1,    bahasa Indonesia ('Sumatera Barat', 'Sumatera Utara')
+//
+// FIXES yang diterapkan:
+//   [FIX-1] Field filter: ADM1_NAME → NAME_1 (GADM field)
+//   [FIX-2] Field statistik: ADM2_NAME → NAME_2 (GADM field)
+//   [FIX-3] vegetationMask dibuat dari baseline.clip(region) per-provinsi
+//            → tidak ada kebocoran masker lintas provinsi
+//   [FIX-4] ImageCollection Sentinel-2 dibuat FRESH di dalam setiap iterasi
+//            → tidak ada piksel provinsi tetangga yang ikut masuk
+// =====================================================================
+
+
+// =====================================================================
+// 1. LOAD ASSET GADM 4.1
+// =====================================================================
+
+var GADM_L2 = ee.FeatureCollection(
+  'projects/cobalt-duality-493421-r6/assets/gadm41_IDN_2'
+);
+
+// Snapshot field names — jalankan sekali untuk verifikasi, lalu comment:
+// print('Contoh fitur GADM:', GADM_L2.first());
+// print('Nama provinsi unik:',
+//   GADM_L2.aggregate_array('NAME_1').distinct().sort()
+// );
+
+
+// =====================================================================
+// 2. KONFIGURASI PROVINSI
+//    NAME_1 di GADM 4.1 Indonesia menggunakan Bahasa Indonesia.
+//    Pastikan ejaan persis sama (case-sensitive di GEE server-side).
+// =====================================================================
+
+var PROVINCE_CONFIG = [
+  {
+    name_1       : 'Aceh',
+    label        : 'Aceh',
+    color        : '#00bcd4',
+    export_suffix: 'Aceh'
+  },
+  {
+    name_1       : 'Sumatera Utara',
+    label        : 'Sumatera Utara',
+    color        : '#ffeb3b',
+    export_suffix: 'SumateraUtara'
+  },
+  {
+    name_1       : 'Sumatera Barat',
+    label        : 'Sumatera Barat',
+    color        : '#f44336',
+    export_suffix: 'SumateraBaratFix'
+  }
+];
+
+
+// =====================================================================
+// 3. PARAMETER WAKTU
+// =====================================================================
+
+var T_BASELINE_START = '2022-10-01';
+var T_BASELINE_END   = '2025-10-31';
+var T_IMPACT_START   = '2025-11-01';
+var T_IMPACT_END     = '2026-01-31';
+var T_CURRENT_START  = '2026-02-01';
+var T_CURRENT_END    = '2026-05-14';
+
+
+// =====================================================================
+// 4. PARAMETER ANALISIS
+// =====================================================================
+
+var CLOUD_PCT_MAX  = 20;    // batas % cloud pixel Sentinel-2
+var VEG_THRESHOLD  = 0.30;  // NDVI minimum untuk masker vegetasi
+var DIV_ZERO_GUARD = 0.02;  // guard divide-by-zero: |denom| minimum
+var SMOOTH_RADIUS  = 1;     // focal_mean radius (piksel) → kernel 3×3
+var STATS_SCALE    = 250;   // meter — resolusi statistik reduceRegions
+var EXPORT_SCALE   = 250;   // meter — resolusi ekspor GeoTIFF
+var CHART_SCALE    = 1000;  // meter — resolusi time series chart
+var TILE_SCALE     = 16;    // tileScale → cegah memory exceeded
+
+
+// =====================================================================
+// 5. VISUALIZATION PARAMETERS
+// =====================================================================
+
+var VIS_NDVI = {
+  min    : 0,
+  max    : 1,
+  palette: ['#8c510a', '#d8b365', '#f6e8c3', '#5ab4ac', '#01665e']
+};
+
+var VIS_RECOVERY = {
+  min    : 0,
+  max    : 100,
+  palette: [
+    '#4d1f00', '#8c510a', '#bf812d', '#dfc27d', '#f6e8c3',
+    '#c7eae5', '#80cdc1', '#35978f', '#01665e', '#003c30'
+  ]
+};
+
+
+// =====================================================================
+// 6. CLOUD MASK + NDVI — Sentinel-2 SR Harmonized
+//    QA60: bit 10 = awan opak, bit 11 = sirrus
+//    NDVI = (B8 − B4) / (B8 + B4)
+// =====================================================================
+
+function maskCloudAndAddNDVI(image) {
+
+  var qa            = image.select('QA60');
+  var cloudBitMask  = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+
+  var clearSky = qa.bitwiseAnd(cloudBitMask).eq(0)
+    .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+
+  return image
+    .updateMask(clearSky)
+    .normalizedDifference(['B8', 'B4'])
+    .rename('NDVI')
+    .copyProperties(image, ['system:time_start']);
+}
+
+
+// =====================================================================
+// 7. FUNGSI CEK JUMLAH IMAGE
+//    Print jumlah image per periode ke konsol GEE.
+//    Jika terlalu sedikit → median akan noisy atau kosong.
+// =====================================================================
+
+function logImageCount(collection, periodLabel, provinceLabel) {
+  print(
+    ee.String(provinceLabel).cat(' | ').cat(periodLabel).cat(': ')
+    .cat(collection.size().format('%d')).cat(' image(s)')
+  );
+}
+
+
+// =====================================================================
+// 8. FUNGSI UTAMA — PROSES SATU PROVINSI
+//    Setiap provinsi berjalan SEPENUHNYA independen:
+//      · Collection Sentinel-2 fresh per provinsi
+//      · vegetationMask dari baseline lokal (sudah di-clip ke region)
+//      · Tidak ada variabel yang dibawa dari iterasi sebelumnya
+// =====================================================================
+
+function processProvince(cfg) {
+
+  var name1        = cfg.name_1;
+  var label        = cfg.label;
+  var borderColor  = cfg.color;
+  var exportSuffix = cfg.export_suffix;
+
+  print('');
+  print('══════════════════════════════════════');
+  print('PROVINSI: ' + label);
+  print('══════════════════════════════════════');
+
+  // ------------------------------------------------------------------
+  // 8a. Filter region dari GADM
+  //     Gunakan NAME_1 (GADM field) — bukan ADM1_NAME (GAUL field)
+  // ------------------------------------------------------------------
+
+  var region = GADM_L2.filter(ee.Filter.eq('NAME_1', name1));
+
+  print(label + ' — Jumlah kab/kota:', region.size());
+
+  Map.addLayer(
+    region,
+    { color: borderColor },
+    label + ' — Boundary'
+  );
+
+
+  // ------------------------------------------------------------------
+  // 8b. Buat Sentinel-2 collection FRESH per provinsi
+  //     FIX-4: tidak reuse collection global dari luar loop
+  //     filterBounds menggunakan geometry region yang sudah spesifik
+  // ------------------------------------------------------------------
+
+  var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+    .filterBounds(region.geometry())
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', CLOUD_PCT_MAX))
+    .map(maskCloudAndAddNDVI);
+
+
+  // ------------------------------------------------------------------
+  // 8c. Pisah per periode & log jumlah image
+  // ------------------------------------------------------------------
+
+  var s2Baseline = s2.filterDate(T_BASELINE_START, T_BASELINE_END);
+  var s2Impact   = s2.filterDate(T_IMPACT_START,   T_IMPACT_END);
+  var s2Current  = s2.filterDate(T_CURRENT_START,  T_CURRENT_END);
+
+  logImageCount(s2Baseline, 'Baseline ', label);
+  logImageCount(s2Impact,   'Impact   ', label);
+  logImageCount(s2Current,  'Current  ', label);
+
+
+  // ------------------------------------------------------------------
+  // 8d. Hitung median per periode
+  //
+  //     .clip(region) dilakukan SEBELUM membuat vegetationMask
+  //     FIX-3: ini yang mencegah kebocoran masker ke provinsi lain
+  //
+  //     Mengapa median?
+  //     Median adalah nilai tengah dari semua piksel dalam 3 tahun.
+  //     Kebal terhadap outlier: tahun kekeringan ekstrem atau
+  //     tahun sangat basah tidak akan menarik baseline keluar dari
+  //     kondisi normalnya — berbeda dengan mean.
+  // ------------------------------------------------------------------
+
+  var ndviBaseline = s2Baseline.select('NDVI').median().clip(region);
+  var ndviImpact   = s2Impact.select('NDVI').median().clip(region);
+  var ndviCurrent  = s2Current.select('NDVI').median().clip(region);
+
+
+  // ------------------------------------------------------------------
+  // 8e. Vegetation mask dari baseline LOKAL provinsi ini
+  //     FIX-3: karena baseline sudah di-clip ke region, masker hanya
+  //     mencakup piksel vegetasi di dalam provinsi yang sedang diproses
+  //
+  //     Threshold 0.30:
+  //       < 0.10 → badan air, awan residual
+  //       0.10–0.20 → tanah kosong, pasir
+  //       0.20–0.30 → lahan terbangun, semak sangat jarang
+  //       > 0.30 → vegetasi (target analisis)
+  // ------------------------------------------------------------------
+
+  var vegetationMask = ndviBaseline.gt(VEG_THRESHOLD);
+
+  var baselineMasked = ndviBaseline.updateMask(vegetationMask);
+  var impactMasked   = ndviImpact.updateMask(vegetationMask);
+  var currentMasked  = ndviCurrent.updateMask(vegetationMask);
+
+
+  // ------------------------------------------------------------------
+  // 8f. Recovery Rate (%)
+  //
+  //     Formula: (current − impact) / (baseline − impact) × 100
+  //
+  //     Guard divide-by-zero:
+  //     Jika baseline ≈ impact (|denominator| < 0.02), artinya
+  //     piksel tersebut tidak terdampak atau sudah pulih sempurna
+  //     sebelum periode impact. Mask piksel ini agar tidak menghasilkan
+  //     nilai ±∞ yang merusak statistik dan visualisasi.
+  //
+  //     Clamp 0–100:
+  //       < 0   → masih lebih buruk dari kondisi impact (set ke 0)
+  //       > 100 → melebihi baseline (over-recovery, set ke 100)
+  // ------------------------------------------------------------------
+
+  var denominator = baselineMasked.subtract(impactMasked);
+  var numerator   = currentMasked.subtract(impactMasked);
+  var validDenom  = denominator.abs().gt(DIV_ZERO_GUARD);
+
+  var recovery = numerator
+    .divide(denominator.where(validDenom.not(), 1))
+    .multiply(100)
+    .clamp(0, 100)
+    .updateMask(validDenom)
+    .updateMask(vegetationMask)
+    .rename('Recovery');
+
+
+  // ------------------------------------------------------------------
+  // 8g. Smoothing — focal mean 3×3 piksel
+  //     Mengurangi salt-and-pepper noise dari cloud residual dan
+  //     variabilitas sub-piksel. Tidak mengubah pola spasial besar.
+  // ------------------------------------------------------------------
+
+  recovery = recovery
+    .focal_mean({ radius: SMOOTH_RADIUS, units: 'pixels' })
+    .float();
+
+
+  // ------------------------------------------------------------------
+  // 8h. Tampilkan layer di peta
+  //     NDVI layers: hidden by default (aktifkan manual di layer panel)
+  //     Recovery: visible by default
+  // ------------------------------------------------------------------
+
+  Map.addLayer(baselineMasked, VIS_NDVI,     label + ' — Baseline NDVI', false);
+  Map.addLayer(impactMasked,   VIS_NDVI,     label + ' — Impact NDVI',   false);
+  Map.addLayer(currentMasked,  VIS_NDVI,     label + ' — Current NDVI',  false);
+  Map.addLayer(recovery,       VIS_RECOVERY, label + ' — Recovery Rate', true);
+
+
+  // ------------------------------------------------------------------
+  // 8i. Statistik per kabupaten/kota
+  //     Gunakan NAME_2 (GADM field) — bukan ADM2_NAME (GAUL field)
+  //     FIX-2: field statistik disesuaikan ke GADM
+  // ------------------------------------------------------------------
+
+  var kabupatenStats = recovery.reduceRegions({
+    collection: region,
+    reducer   : ee.Reducer.mean()
+      .combine(ee.Reducer.median(),                     null, true)
+      .combine(ee.Reducer.stdDev(),                     null, true)
+      .combine(ee.Reducer.percentile([10, 25, 75, 90]), null, true)
+      .combine(ee.Reducer.count(),                      null, true),
+    scale     : STATS_SCALE,
+    tileScale : TILE_SCALE
+  });
+
+  // Tambahkan kolom nama provinsi → berguna saat gabung CSV 3 provinsi
+  kabupatenStats = kabupatenStats.map(function(f) {
+    return f.set('PROVINCE', label);
+  });
+
+
+  // ------------------------------------------------------------------
+  // 8j. Statistik keseluruhan provinsi
+  // ------------------------------------------------------------------
+
+  var overallStats = recovery.reduceRegion({
+    reducer  : ee.Reducer.mean()
+      .combine(ee.Reducer.median(), null, true)
+      .combine(ee.Reducer.stdDev(), null, true)
+      .combine(ee.Reducer.min(),    null, true)
+      .combine(ee.Reducer.max(),    null, true),
+    geometry : region.geometry(),
+    scale    : STATS_SCALE,
+    maxPixels: 1e13,
+    tileScale: TILE_SCALE
+  });
+
+
+  // ------------------------------------------------------------------
+  // 8k. Print hasil ke konsol GEE
+  //     Gunakan NAME_2 (GADM) bukan ADM2_NAME (GAUL)
+  // ------------------------------------------------------------------
+
+  print(label + ' — Overall Recovery (%):', overallStats);
+
+  print(
+    label + ' — Statistik per kab/kota:',
+    kabupatenStats.select(['PROVINCE', 'NAME_2', 'mean', 'median', 'stdDev'])
+  );
+
+  print(
+    label + ' — 5 Pemulihan TERBURUK:',
+    kabupatenStats.sort('mean').limit(5)
+      .select(['NAME_2', 'mean', 'median'])
+  );
+
+  print(
+    label + ' — 5 Pemulihan TERBAIK:',
+    kabupatenStats.sort('mean', false).limit(5)
+      .select(['NAME_2', 'mean', 'median'])
+  );
+
+
+  // ------------------------------------------------------------------
+  // 8l. NDVI Time Series Chart
+  //     Tren NDVI dari 2022 hingga sekarang — terlihat jelas kapan
+  //     penurunan bencana dimulai dan kapan pemulihan mulai terjadi
+  // ------------------------------------------------------------------
+
+  var chart = ui.Chart.image.series({
+    imageCollection: s2.select('NDVI'),
+    region         : region.geometry(),
+    reducer        : ee.Reducer.mean(),
+    scale          : CHART_SCALE,
+    xProperty      : 'system:time_start'
+  })
+  .setOptions({
+    title    : label + ' — NDVI Time Series (Okt 2022 – Mei 2026)',
+    hAxis    : { title: 'Tanggal', format: 'MMM yyyy' },
+    vAxis    : { title: 'NDVI', minValue: 0, maxValue: 1 },
+    lineWidth: 2,
+    pointSize: 3,
+    series   : { 0: { color: '#01665e' } }
+  });
+
+  print(chart);
+
+
+  // ------------------------------------------------------------------
+  // 8m. Export CSV statistik ke Google Drive
+  //     selectors mencakup NAME_2 (GADM) bukan ADM2_NAME (GAUL)
+  // ------------------------------------------------------------------
+
+  Export.table.toDrive({
+    collection     : kabupatenStats,
+    description    : 'RecoveryStats_' + exportSuffix,
+    folder         : 'GEE_VegetationRecovery',
+    fileNamePrefix : 'recovery_stats_' + exportSuffix,
+    fileFormat     : 'CSV',
+    selectors      : [
+      'PROVINCE', 'NAME_1', 'NAME_2',
+      'mean', 'median', 'stdDev',
+      'p10', 'p25', 'p75', 'p90',
+      'count'
+    ]
+  });
+
+
+  // ------------------------------------------------------------------
+  // 8n. Export raster GeoTIFF recovery ke Google Drive
+  // ------------------------------------------------------------------
+
+  Export.image.toDrive({
+    image          : recovery,
+    description    : 'RecoveryRaster_' + exportSuffix,
+    folder         : 'GEE_VegetationRecovery',
+    fileNamePrefix : 'recovery_raster_' + exportSuffix,
+    region         : region.geometry(),
+    scale          : EXPORT_SCALE,
+    maxPixels      : 1e13,
+    crs            : 'EPSG:4326',
+    formatOptions  : { cloudOptimized: true }
+  });
+
+  return {
+    label   : label,
+    region  : region,
+    recovery: recovery,
+    vegMask : vegetationMask,
+    stats   : kabupatenStats,
+    overall : overallStats
+  };
+}
+
+
+// =====================================================================
+// 9. SETUP PETA
+// =====================================================================
+
+Map.setOptions('SATELLITE');
+Map.setCenter(98.3, 2.8, 6);   // pusat Sumatera bagian utara–barat
+
+
+// =====================================================================
+// 10. JALANKAN LOOP
+// =====================================================================
+
+print('══════════════════════════════════════════');
+print('VEGETATION RECOVERY ANALYSIS — SUMATRA');
+print('Dataset  : GADM 4.1 (gadm41_IDN_2)');
+print('Field    : NAME_1 (provinsi), NAME_2 (kab/kota)');
+print('Baseline : ' + T_BASELINE_START + ' → ' + T_BASELINE_END);
+print('Impact   : ' + T_IMPACT_START   + ' → ' + T_IMPACT_END);
+print('Recovery : ' + T_CURRENT_START  + ' → ' + T_CURRENT_END);
+print('══════════════════════════════════════════');
+
+var allResults = [];
+
+for (var i = 0; i < PROVINCE_CONFIG.length; i++) {
+  allResults.push(processProvince(PROVINCE_CONFIG[i]));
+}
+
+
+// =====================================================================
+// 11. COMPOSITE MOSAIC — GABUNGAN 3 PROVINSI
+//     Dibuat setelah loop selesai.
+//     Setiap recovery sudah di-clip ke region-nya sendiri,
+//     sehingga mosaic tidak akan overlap atau bocor lintas provinsi.
+// =====================================================================
+
+if (allResults.length === PROVINCE_CONFIG.length) {
+
+  var allRegions = ee.FeatureCollection(
+    allResults.map(function(r) { return r.region; })
+  ).flatten();
+
+  var compositeRecovery = ee.ImageCollection(
+    allResults.map(function(r) { return r.recovery; })
+  ).mosaic();
+
+  Map.addLayer(
+    compositeRecovery,
+    VIS_RECOVERY,
+    'COMPOSITE — Recovery Rate 3 Provinsi',
+    false
+  );
+
+  Export.image.toDrive({
+    image          : compositeRecovery,
+    description    : 'RecoveryRaster_Composite3Provinsi',
+    folder         : 'GEE_VegetationRecovery',
+    fileNamePrefix : 'recovery_raster_composite_sumatera',
+    region         : allRegions.geometry(),
+    scale          : EXPORT_SCALE,
+    maxPixels      : 1e13,
+    crs            : 'EPSG:4326',
+    formatOptions  : { cloudOptimized: true }
+  });
+
+  print('');
+  print('Composite 3 provinsi selesai dibuat.');
+}
+
+
+// =====================================================================
+// 12. LEGENDA
+// =====================================================================
+
+print('');
+print('══════════════════════════════════════════');
+print('INTERPRETASI RECOVERY RATE');
+print('   0 – 25% : Rendah  — vegetasi belum pulih');
+print('  25 – 50% : Sedang  — pemulihan berlangsung lambat');
+print('  50 – 75% : Baik    — vegetasi pulih cukup baik');
+print('  75 –100% : Tinggi  — mendekati atau melebihi baseline');
+print('══════════════════════════════════════════');
+print('CATATAN METODOLOGI');
+print('· Baseline : median NDVI Okt 2022–Okt 2025 (3 tahun)');
+print('· Median   : kebal outlier kekeringan / tahun basah anomali');
+print('· Masker   : NDVI baseline > 0.30 (hanya vegetasi)');
+print('· Guard    : |baseline − impact| < 0.02 → piksel di-mask');
+print('· Smoothing: focal mean 3×3 piksel (reduksi noise)');
+print('· Satelit  : Sentinel-2 SR Harmonized, cloud < 20%');
+print('· Dataset  : GADM 4.1 gadm41_IDN_2');
+print('══════════════════════════════════════════');
+
+
+// =====================================================================
+// 13. SNIPPET VERIFIKASI — uncomment saat perlu debug
+//     Jalankan dulu untuk pastikan nama NAME_1 persis benar.
+// =====================================================================
+
+// print('Seluruh NAME_1 di asset:',
+//   GADM_L2.aggregate_array('NAME_1').distinct().sort()
+// );
+// print('Struktur fitur pertama:', GADM_L2.first());
